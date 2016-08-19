@@ -1,0 +1,16 @@
+add_llvm_loadable_module(LLVMCodeGenHardnening
+  InstructionDuplicationPass.cc
+  LoadStoreVerificationPass.cc
+  BranchDuplicationPass.cc
+  NopInsertionPass.cc
+  CustomRegisterAllocatorPass.cc
+  RegAllocFast.cpp
+  BLReplacePass.cc
+  PushPopReplacePass.cc
+  ITReplacePass.cc
+  LSMUpdateReplacePass.cc
+  CheckIdempotentPass.cc
+  CallInsertionPass.cc
+  main.cc
+  util.cc
+  )

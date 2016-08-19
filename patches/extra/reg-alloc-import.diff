@@ -1,0 +1,77 @@
+--- CodeGen/RegAllocFast.cpp	2016-08-16 13:39:39.449427723 -0700
++++ lib/RegAllocFast.cpp	2016-10-06 14:54:44.611081571 -0700
+@@ -12,6 +12,7 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++#ifndef __include_external_regalloc
+ #include "llvm/ADT/DenseMap.h"
+ #include "llvm/ADT/IndexedMap.h"
+ #include "llvm/ADT/STLExtras.h"
+@@ -35,23 +36,21 @@
+ #include <algorithm>
+ using namespace llvm;
+ 
+-#define DEBUG_TYPE "regalloc"
++#define DEBUG_TYPE "regalloc-imported"
+ 
+ STATISTIC(NumStores, "Number of stores added");
+ STATISTIC(NumLoads , "Number of loads added");
+ STATISTIC(NumCopies, "Number of copies coalesced");
+ 
+-static RegisterRegAlloc
+-  fastRegAlloc("fast", "fast register allocator", createFastRegisterAllocator);
+-
+-namespace {
++#endif
++namespace iskip_external {
+   class RAFast : public MachineFunctionPass {
+   public:
+     static char ID;
+     RAFast() : MachineFunctionPass(ID), StackSlotForVirtReg(-1),
+                isBulkSpilling(false) {}
+ 
+-  private:
++  public:
+     MachineFunction *MF;
+     MachineRegisterInfo *MRI;
+     const TargetRegisterInfo *TRI;
+@@ -163,7 +162,7 @@
+           MachineFunctionProperties::Property::AllVRegsAllocated);
+     }
+ 
+-  private:
++  public:
+     bool runOnMachineFunction(MachineFunction &Fn) override;
+     void AllocateBasicBlock();
+     void handleThroughOperands(MachineInstr *MI,
+@@ -188,18 +187,21 @@
+       return LiveVirtRegs.find(TargetRegisterInfo::virtReg2Index(VirtReg));
+     }
+     LiveRegMap::iterator assignVirtToPhysReg(unsigned VReg, unsigned PhysReg);
+-    LiveRegMap::iterator allocVirtReg(MachineInstr &MI, LiveRegMap::iterator,
++    virtual LiveRegMap::iterator allocVirtReg(MachineInstr &MI, LiveRegMap::iterator,
+                                       unsigned Hint);
+-    LiveRegMap::iterator defineVirtReg(MachineInstr &MI, unsigned OpNum,
++    virtual LiveRegMap::iterator defineVirtReg(MachineInstr &MI, unsigned OpNum,
+                                        unsigned VirtReg, unsigned Hint);
+     LiveRegMap::iterator reloadVirtReg(MachineInstr &MI, unsigned OpNum,
+                                        unsigned VirtReg, unsigned Hint);
+     void spillAll(MachineBasicBlock::iterator MI);
+     bool setPhysReg(MachineInstr *MI, unsigned OpNum, unsigned PhysReg);
+   };
+-  char RAFast::ID = 0;
+ }
+ 
++using namespace iskip_external;
++#ifndef __include_external_regalloc
++char RAFast::ID = 0;
++
+ /// getStackSpaceFor - This allocates space for the specified virtual register
+ /// to be held on the stack.
+ int RAFast::getStackSpaceFor(unsigned VirtReg, const TargetRegisterClass *RC) {
+@@ -1120,3 +1122,4 @@
+ FunctionPass *llvm::createFastRegisterAllocator() {
+   return new RAFast();
+ }
++#endif

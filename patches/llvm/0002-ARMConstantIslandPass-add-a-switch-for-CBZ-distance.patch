@@ -1,0 +1,39 @@
+From 29e7e43ceb174c79ec2d7afcfe01d4b339594c32 Mon Sep 17 00:00:00 2001
+From: Lucian Cojocar <cojocar@google.com>
+Date: Fri, 16 Sep 2016 11:21:34 -0700
+Subject: [PATCH 2/2] ARMConstantIslandPass: add a switch for CBZ distance
+
+If we emit code after this pass, the CB{N}Z constraints might not be
+satisfied anymore. Usually we get the error:
+"error in backend: out of range pc-relative fixup value"
+---
+ lib/Target/ARM/ARMConstantIslandPass.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/lib/Target/ARM/ARMConstantIslandPass.cpp b/lib/Target/ARM/ARMConstantIslandPass.cpp
+index 7992d02..78c9127 100644
+--- a/lib/Target/ARM/ARMConstantIslandPass.cpp
++++ b/lib/Target/ARM/ARMConstantIslandPass.cpp
+@@ -58,6 +58,10 @@ static cl::opt<unsigned>
+ CPMaxIteration("arm-constant-island-max-iteration", cl::Hidden, cl::init(30),
+           cl::desc("The max number of iteration for converge"));
+ 
++static cl::opt<unsigned>
++CBMaxDistance("arm-max-cb-dist", cl::Hidden, cl::init(126),
++          cl::desc("The max distance that a cb{n}z insn can use."));
++
+ namespace {
+   /// ARMConstantIslands - Due to limited PC-relative displacements, ARM
+   /// requires constant pool entries to be scattered among the instructions
+@@ -1816,7 +1820,7 @@ bool ARMConstantIslands::optimizeThumb2Branches() {
+     // because the cmp will be eliminated.
+     unsigned BrOffset = getOffsetOf(Br.MI) + 4 - 2;
+     unsigned DestOffset = BBInfo[DestBB->getNumber()].Offset;
+-    if (BrOffset < DestOffset && (DestOffset - BrOffset) <= 126) {
++    if (BrOffset < DestOffset && (DestOffset - BrOffset) <= CBMaxDistance) {
+       MachineBasicBlock::iterator CmpMI = Br.MI;
+       if (CmpMI != Br.MI->getParent()->begin()) {
+         --CmpMI;
+-- 
+2.8.0.rc3.226.g39d4020
+

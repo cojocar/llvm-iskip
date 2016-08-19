@@ -1,0 +1,267 @@
+From 594f1c081483097bdcb4a58b81f8d43fc263d871 Mon Sep 17 00:00:00 2001
+From: Lucian Cojocar <cojocar@google.com>
+Date: Fri, 19 Aug 2016 12:36:02 -0700
+Subject: [PATCH 1/2] iskip: load external backend passes hooks
+
+Some of the hooks are:
+	* external register allocator
+	* PassPostPreSched
+	* PassPostPreEmit
+	* PreConstantIsland
+---
+ CMakeLists.txt                      |  2 +-
+ lib/Target/ARM/ARM.h                |  2 +
+ lib/Target/ARM/ARMHardeningPass.cpp | 55 ++++++++++++++++++++++++
+ lib/Target/ARM/ARMISelDAGToDAG.cpp  |  1 +
+ lib/Target/ARM/ARMTargetMachine.cpp | 86 +++++++++++++++++++++++++++++++++++++
+ lib/Target/ARM/CMakeLists.txt       |  1 +
+ 6 files changed, 146 insertions(+), 1 deletion(-)
+ create mode 100644 lib/Target/ARM/ARMHardeningPass.cpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c773a70..a090521 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -288,7 +288,7 @@ set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ""
+   CACHE STRING "Semicolon-separated list of experimental targets to build.")
+ 
+ option(BUILD_SHARED_LIBS
+-  "Build all libraries as shared libraries instead of static" OFF)
++	"Build all libraries as shared libraries instead of static" ON)
+ 
+ option(LLVM_ENABLE_BACKTRACES "Enable embedding backtraces on crash." ON)
+ if(LLVM_ENABLE_BACKTRACES)
+diff --git a/lib/Target/ARM/ARM.h b/lib/Target/ARM/ARM.h
+index be30482..73e0eaa 100644
+--- a/lib/Target/ARM/ARM.h
++++ b/lib/Target/ARM/ARM.h
+@@ -44,6 +44,8 @@ FunctionPass *createARMOptimizeBarriersPass();
+ FunctionPass *createThumb2SizeReductionPass(
+     std::function<bool(const Function &)> Ftor = nullptr);
+ 
++FunctionPass *createARMHardeningPass();
++
+ void LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
+                                   ARMAsmPrinter &AP);
+ 
+diff --git a/lib/Target/ARM/ARMHardeningPass.cpp b/lib/Target/ARM/ARMHardeningPass.cpp
+new file mode 100644
+index 0000000..0e64763
+--- /dev/null
++++ b/lib/Target/ARM/ARMHardeningPass.cpp
+@@ -0,0 +1,55 @@
++#include "ARM.h"
++#include "ARMBasicBlockInfo.h"
++#include "ARMMachineFunctionInfo.h"
++#include "MCTargetDesc/ARMAddressingModes.h"
++#include "Thumb2InstrInfo.h"
++#include "llvm/ADT/STLExtras.h"
++#include "llvm/ADT/SmallSet.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/ADT/Statistic.h"
++#include "llvm/CodeGen/MachineConstantPool.h"
++#include "llvm/CodeGen/MachineFunctionPass.h"
++#include "llvm/CodeGen/MachineJumpTableInfo.h"
++#include "llvm/CodeGen/MachineRegisterInfo.h"
++#include "llvm/IR/DataLayout.h"
++#include "llvm/Support/CommandLine.h"
++#include "llvm/Support/Debug.h"
++#include "llvm/Support/ErrorHandling.h"
++#include "llvm/Support/Format.h"
++#include "llvm/Support/raw_ostream.h"
++#include "llvm/Target/TargetMachine.h"
++#include <algorithm>
++
++using namespace llvm;
++
++namespace {
++  struct ARMHardeningPass: public llvm::MachineFunctionPass {
++    static char ID;
++    ARMHardeningPass() : MachineFunctionPass(ID) {}
++    bool runOnMachineFunction(llvm::MachineFunction &Fn) override;
++
++    llvm::MachineFunctionProperties getRequiredProperties() const override {
++      return llvm::MachineFunctionProperties().set(
++        llvm::MachineFunctionProperties::Property::AllVRegsAllocated);
++    }
++
++    const char *getPassName() const override {
++      return "ARMHardening Pass (Internal, do nothing)";
++    }
++  };
++}
++
++namespace {
++  bool ARMHardeningPass::runOnMachineFunction(MachineFunction &Fn)
++  {
++    errs() << "ARMHardening(internal, do nothing): ";
++    errs().write_escaped(Fn.getName()) << '\n';
++    return false;
++  }
++}
++
++char ARMHardeningPass::ID = 0;
++
++FunctionPass *llvm::createARMHardeningPass() {
++  return new ARMHardeningPass();
++}
+diff --git a/lib/Target/ARM/ARMISelDAGToDAG.cpp b/lib/Target/ARM/ARMISelDAGToDAG.cpp
+index 01b4e19..96bd95e 100644
+--- a/lib/Target/ARM/ARMISelDAGToDAG.cpp
++++ b/lib/Target/ARM/ARMISelDAGToDAG.cpp
+@@ -2705,6 +2705,7 @@ void ARMDAGToDAGISel::Select(SDNode *N) {
+   default: break;
+   case ISD::ADD:
+   case ISD::OR:
++		   //errs() << "Try ADD\n";
+     if (trySMLAWSMULW(N))
+       return;
+     break;
+diff --git a/lib/Target/ARM/ARMTargetMachine.cpp b/lib/Target/ARM/ARMTargetMachine.cpp
+index 066587a..c1f3ab5 100644
+--- a/lib/Target/ARM/ARMTargetMachine.cpp
++++ b/lib/Target/ARM/ARMTargetMachine.cpp
+@@ -23,6 +23,7 @@
+ #include "llvm/Support/CommandLine.h"
+ #include "llvm/Support/FormattedStream.h"
+ #include "llvm/Support/TargetRegistry.h"
++#include "llvm/Support/DynamicLibrary.h"
+ #include "llvm/Target/TargetOptions.h"
+ #include "llvm/Transforms/Scalar.h"
+ using namespace llvm;
+@@ -43,6 +44,11 @@ EnableARMLoadStoreOpt("arm-load-store-opt", cl::Hidden,
+                       cl::desc("Enable ARM load/store optimization pass"),
+                       cl::init(true));
+ 
++static cl::opt<bool> UseExternalRegAlloc(
++    "use-external-regalloc", cl::Hidden,
++    cl::desc("Use (ARM) the external reg allocator."),
++    cl::init(false));
++
+ // FIXME: Unify control over GlobalMerge.
+ static cl::opt<cl::boolOrDefault>
+ EnableGlobalMerge("arm-global-merge", cl::Hidden,
+@@ -351,8 +357,17 @@ public:
+   bool addPreISel() override;
+   bool addInstSelector() override;
+   void addPreRegAlloc() override;
++  void addPostRegAlloc() override;
+   void addPreSched2() override;
+   void addPreEmitPass() override;
++  FunctionPass *createTargetRegisterAllocator(bool) override;
++private:
++  void addARMHardeningPassesBySymbol(const std::string &);
++
++  void addARMHardeningPass();
++  void addARMHardeningPassPostPreSched2();
++  void addARMHardeningPassPostPreEmit();
++  void addARMHardeningPassPreConstantIsland();
+ };
+ } // namespace
+ 
+@@ -422,6 +437,70 @@ void ARMPassConfig::addPreRegAlloc() {
+   }
+ }
+ 
++typedef std::vector<FunctionPass *> (*create_arm_passes_external_t)();
++void ARMPassConfig::addARMHardeningPassesBySymbol(const std::string &SymbolName)
++{
++  void *ret = sys::DynamicLibrary::SearchForAddressOfSymbol(SymbolName);
++  if (ret != nullptr) {
++    create_arm_passes_external_t createARMHardeingPassExt;
++    createARMHardeingPassExt = (create_arm_passes_external_t)(intptr_t)ret;
++    std::vector<FunctionPass *> extPasses =
++      createARMHardeingPassExt();
++    for (auto pass : extPasses) {
++      errs() << "add ext pass: " << std::string(pass->getPassName()) << "\n";
++      addPass(pass);
++    }
++  } else {
++    errs() << "Symbol not found: " << SymbolName << "\n";
++  }
++}
++
++void ARMPassConfig::addARMHardeningPassPostPreEmit() {
++  addARMHardeningPassesBySymbol("_ZN4llvm36createARMHardeningPassLibPostPreEmitEv");
++}
++
++void ARMPassConfig::addARMHardeningPass() {
++  addARMHardeningPassesBySymbol("_ZN4llvm37createARMHardeningPassLibPostRegAllocEv");
++}
++
++void ARMPassConfig::addARMHardeningPassPostPreSched2() {
++  addARMHardeningPassesBySymbol("_ZN4llvm38createARMHardeningPassLibPostPreSched2Ev");
++}
++
++void ARMPassConfig::addARMHardeningPassPreConstantIsland() {
++  addARMHardeningPassesBySymbol("_ZN4llvm42createARMHardeningPassLibPreConstantIslandEv");
++}
++
++FunctionPass* ARMPassConfig::createTargetRegisterAllocator(bool Optimized) {
++  void *ret = sys::DynamicLibrary::SearchForAddressOfSymbol("_ZN4llvm35createTargetARMCustomRegAllocPassesEv");
++  if (UseExternalRegAlloc && ret != nullptr) {
++    create_arm_passes_external_t createHardeningPassLibAll;
++    createHardeningPassLibAll = (create_arm_passes_external_t)(intptr_t)ret;
++    errs() << "external TargetARM reg alloc all@" << ret << "\n";
++    std::vector<FunctionPass *> extPasses =
++      createHardeningPassLibAll();
++
++    // assume the first pass is actually the reg allocator, the rest are
++    // just added
++    auto it = extPasses.begin();
++    FunctionPass *ret = *it;
++    errs() << "add RA pass: " << std::string(ret->getPassName()) << "\n";
++    ++it;
++    for (; it != extPasses.end(); ++it) {
++      FunctionPass *pass = *it;
++      errs() << "add ext pass (via RA): " << std::string(pass->getPassName()) << "\n";
++      addPass(pass);
++    }
++    return ret;
++  } else {
++      // add original passes if we don't have any external ones
++      return TargetPassConfig::createTargetRegisterAllocator(Optimized);
++  }
++
++  // the external passes are added inside this function
++  return nullptr;
++}
++
+ void ARMPassConfig::addPreSched2() {
+   if (getOptLevel() != CodeGenOpt::None) {
+     if (EnableARMLoadStoreOpt)
+@@ -445,6 +524,7 @@ void ARMPassConfig::addPreSched2() {
+     }));
+   }
+   addPass(createThumb2ITBlockPass());
++  this->addARMHardeningPassPostPreSched2();
+ }
+ 
+ void ARMPassConfig::addPreEmitPass() {
+@@ -459,5 +539,11 @@ void ARMPassConfig::addPreEmitPass() {
+   if (getOptLevel() != CodeGenOpt::None)
+     addPass(createARMOptimizeBarriersPass());
+ 
++  this->addARMHardeningPassPreConstantIsland();
+   addPass(createARMConstantIslandPass());
++  this->addARMHardeningPassPostPreEmit();
++}
++
++void ARMPassConfig::addPostRegAlloc() {
++  this->addARMHardeningPass();
+ }
+diff --git a/lib/Target/ARM/CMakeLists.txt b/lib/Target/ARM/CMakeLists.txt
+index d96acb6..676cb18 100644
+--- a/lib/Target/ARM/CMakeLists.txt
++++ b/lib/Target/ARM/CMakeLists.txt
+@@ -45,6 +45,7 @@ add_llvm_target(ARMCodeGen
+   Thumb2InstrInfo.cpp
+   Thumb2SizeReduction.cpp
+   ARMComputeBlockSize.cpp
++  ARMHardeningPass.cpp
+   )
+ 
+ add_subdirectory(TargetInfo)
+-- 
+2.8.0.rc3.226.g39d4020
+
