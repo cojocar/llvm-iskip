@@ -83,7 +83,7 @@ functions.
 
 Declare a function with `__attribute__((annotate("armhardnening=true")))` to
 include the function in the *whitelist* or with
-`__attribute__((annotate("armhardnening=true")))` to include the function in
+`__attribute__((annotate("armhardnening=false")))` to include the function in
 the *blacklist*. Use the flag `-iskip-deploy-policy` to specify the behavior of
 `iskip` in regards to *{white,black}list*.
 

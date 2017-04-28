@@ -110,7 +110,7 @@ namespace ARMHardeningUtil {
           cast<ConstantDataArray>(
             cast<GlobalVariable>(
               e->getOperand(1)->getOperand(0))->getOperand(0))->getAsCString();
-        if (anno == name)
+        if (fn == F && anno == name)
           return true;
       }
     }
