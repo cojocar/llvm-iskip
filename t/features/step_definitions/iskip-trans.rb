@@ -143,7 +143,7 @@ def run_llc_with_extra_flags(asm_out_file, flags_str)
 end
 
 Given(/^a temporary directory output$/) do
-	@current_output_dir=Dir.mktmpdir('/tmp/iskip-llvm-tests-')
+	@current_output_dir=Dir.mktmpdir('iskip-llvm-tests-')
 	if @verbose == true
 		announce_or_puts("current output is in " + @current_output_dir)
 	end

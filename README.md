@@ -20,7 +20,8 @@ your environment.
 ## Running the tests
 
 [cucumber](https://cucumber.io) must be installed. `apt-get install cucumber`
-works on Debian based distros.
+works on Debian based distros. Aruba must be installed: `gem install
+--user-install aruba -v '0.7.4'`.
 
 To run the tests
 ```sh
